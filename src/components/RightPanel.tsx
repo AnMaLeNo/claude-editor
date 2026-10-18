@@ -237,6 +237,13 @@ export function RightPanel({ data, onCloned, onDeleted }: { data: SessionData; o
             <li>Les puces d'outils filtrent appels <i>et</i> résultats de l'outil.</li>
             <li>« tour N » sur une carte isole ce tour ; les « Contexte injecté » et « Technique » sont masqués par défaut.</li>
           </ul>
+          <h3>Modifier</h3>
+          <ul className="help">
+            <li><b>✎ Modifier</b> : texte d'un prompt, d'une réponse ou d'un résultat d'outil. La réflexion (signée) n'est pas modifiable.</li>
+            <li><b>✕ Supprimer</b> : un appel d'outil et son résultat partent ensemble ; la chaîne parentUuid est recousue. <b>✕ tour</b> supprime tout un tour.</li>
+            <li><b>+ prompt / + réponse après</b> : insère un message.</li>
+            <li>Rien n'est écrit avant <b>Enregistrer</b> ; une session locale est toujours enregistrée comme nouveau clone.</li>
+          </ul>
           <h3>Cloner / continuer</h3>
           <p className="help">
             Le clone garde les mêmes uuid mais reçoit un nouveau <code>sessionId</code> (réécrit sur chaque ligne) et un marqueur <code>forkedFrom</code>, comme <code>/branch</code>. Le fichier doit s'appeler <code>&lt;sessionId&gt;.jsonl</code>. Vérifié avec Claude Code 2.1.302 : <code>claude --resume &lt;id&gt;</code> (fichier dans ~/.claude/projects/…) et <code>claude --resume /chemin/absolu.jsonl</code> reprennent le clone avec tout le contexte.

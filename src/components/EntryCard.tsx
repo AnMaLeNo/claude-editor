@@ -32,6 +32,10 @@ export function EntryCard({
   onGoto,
   onFocusTurn,
   forceOpen,
+  onEdit,
+  onDelete,
+  onRestore,
+  onInsert,
 }: {
   e: Entry;
   re: RegExp | null;
@@ -40,7 +44,16 @@ export function EntryCard({
   onGoto: (uuidOrIndex: string | number) => void;
   onFocusTurn: (t: number) => void;
   forceOpen: boolean;
+  onEdit: (e: Entry, text: string) => void;
+  onDelete: (e: Entry) => void;
+  onRestore: (e: Entry) => void;
+  onInsert: (e: Entry, role: 'user' | 'assistant') => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const editable = !e.deleted && (e.kind === 'prompt' || e.kind === 'assistant' || e.kind === 'tool_result');
+  const deletable = !e.deleted && !e.inserted && (e.kind === 'prompt' || e.kind === 'assistant' || e.kind === 'thinking' || e.kind === 'tool_use' || e.kind === 'tool_result');
+  const insertable = !e.deleted && !e.inserted && !!e.uuid && (e.kind === 'prompt' || e.kind === 'assistant' || e.kind === 'tool_result');
   const [expanded, setExpanded] = useState(false);
   const info = KIND_INFO[e.kind];
   const open = expanded || forceOpen;
@@ -86,10 +99,13 @@ export function EntryCard({
   }, [e.text, e.kind, re, open]);
 
   return (
-    <article id={`e-${e.i}`} className={`card kind-${e.kind} ${e.isError ? 'error' : ''} ${isCurrent ? 'current' : ''} ${e.sidechain ? 'sidechain' : ''}`} style={{ ['--c' as string]: info.color }}>
+    <article id={`e-${e.i}`} className={`card kind-${e.kind} ${e.isError ? 'error' : ''} ${isCurrent ? 'current' : ''} ${e.sidechain ? 'sidechain' : ''} ${e.deleted ? 'deleted' : ''} ${e.inserted ? 'inserted' : ''} ${e.edited ? 'edited' : ''}`} style={{ ['--c' as string]: info.color }}>
       <header>
         <span className="kind-dot" />
         <span className="title">{e.title}</span>
+        {e.inserted && <span className="badge new">nouveau</span>}
+        {e.edited && <span className="badge edit">modifié</span>}
+        {e.deleted && <span className="badge err">supprimé</span>}
         {e.sidechain && <span className="badge">sous-agent{e.agentId ? ` ${e.agentId.slice(0, 6)}` : ''}</span>}
         {e.isError && <span className="badge err">erreur</span>}
         {e.result?.interrupted && <span className="badge err">interrompu</span>}
@@ -104,14 +120,36 @@ export function EntryCard({
         <span className="time" title={e.ts}>
           {fmtTime(e.ts)}
         </span>
-        <span className="line" title="Numéro de ligne dans le fichier">
-          L{e.i + 1}
-        </span>
+        {e.i >= 0 && (
+          <span className="line" title="Numéro de ligne dans le fichier">
+            L{e.i + 1}
+          </span>
+        )}
       </header>
       {e.thinking && (
         <Collapsible label="réflexion jointe">{highlight(e.thinking, re)}</Collapsible>
       )}
-      {body}
+      {editing ? (
+        <div className="editor">
+          <textarea value={draft} onChange={(ev) => setDraft(ev.target.value)} rows={Math.min(24, Math.max(4, draft.split('\n').length + 1))} autoFocus />
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() => {
+                onEdit(e, draft);
+                setEditing(false);
+              }}
+            >
+              Appliquer
+            </button>
+            <button onClick={() => setEditing(false)}>Annuler</button>
+            {e.kind === 'prompt' && <span className="hint">Les balises &lt;ide_selection&gt; / &lt;system-reminder&gt; font partie du texte : tu peux les retirer.</span>}
+            {e.kind === 'tool_result' && <span className="hint">Remplace le contenu renvoyé à Claude par l'outil.</span>}
+          </div>
+        </div>
+      ) : (
+        body
+      )}
       {e.heavy && (
         <div className="note">
           Aperçu tronqué ({e.fullChars?.toLocaleString('fr-FR')} caractères). Le texte complet est dans « JSON brut ». La recherche ne porte que sur cet aperçu.
@@ -148,6 +186,43 @@ export function EntryCard({
           <span className="dim mono" title={e.uuid}>
             {e.uuid.slice(0, 8)}
           </span>
+        )}
+        <span className="spacer" />
+        {editable && !editing && (
+          <button
+            className="link act"
+            onClick={() => {
+              setDraft(e.text);
+              setEditing(true);
+            }}
+          >
+            ✎ Modifier
+          </button>
+        )}
+        {insertable && (
+          <>
+            <button className="link act" onClick={() => onInsert(e, 'user')} title="Insérer un prompt utilisateur après cette entrée">
+              + prompt après
+            </button>
+            <button className="link act" onClick={() => onInsert(e, 'assistant')} title="Insérer une réponse de Claude après cette entrée">
+              + réponse après
+            </button>
+          </>
+        )}
+        {deletable && (
+          <button className="link act danger-link" onClick={() => onDelete(e)} title={e.kind === 'tool_use' || e.kind === 'tool_result' ? "L'appel et son résultat sont supprimés ensemble" : 'Supprimer cette entrée'}>
+            ✕ Supprimer
+          </button>
+        )}
+        {e.inserted && (
+          <button className="link act danger-link" onClick={() => onDelete(e)}>
+            ✕ Retirer
+          </button>
+        )}
+        {e.deleted && (
+          <button className="link act" onClick={() => onRestore(e)}>
+            ↶ Rétablir
+          </button>
         )}
       </footer>
     </article>

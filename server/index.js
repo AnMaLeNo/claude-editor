@@ -7,6 +7,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseLines, normalize, computeStats, quickSummary, cloneTranscript } from './parse.js';
+import { applyEdits } from './edit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -192,6 +193,33 @@ app.post('/api/sessions/:key/clone', async (req, res) => {
     resumeById: dest === 'same' ? `claude --resume ${newId}` : undefined,
     resumeByPath: `claude --resume "${target}"`,
   });
+});
+
+// Édition : applique les ops sur le fichier d'origine puis écrit en place (fichiers déposés/clones)
+// ou dans un nouveau clone (obligatoire pour les sessions locales de Claude Code).
+app.post('/api/sessions/:key/edit', async (req, res) => {
+  const src = await resolveKey(req.params.key);
+  if (!src) return res.status(404).json({ error: 'Session inconnue' });
+  const { ops = [], dest = src.group === 'local' ? 'clone' : 'inplace', title, cloneDest = 'same' } = req.body ?? {};
+  if (!Array.isArray(ops) || !ops.length) return res.status(400).json({ error: 'Aucune modification' });
+  if (dest === 'inplace' && src.group === 'local') return res.status(403).json({ error: 'Session locale en lecture seule : enregistre comme clone.' });
+  const text = await fsp.readFile(src.path, 'utf8');
+  const edited = applyEdits(text, ops);
+  if (edited.errors.length) return res.status(400).json({ error: edited.errors.map((e) => e.message).join(' ; '), details: edited.errors });
+  let target = src.path;
+  let newSessionId;
+  if (dest === 'clone') {
+    newSessionId = crypto.randomUUID();
+    const { text: cloned } = cloneTranscript(edited.text, newSessionId, { title: title?.trim() || undefined });
+    const dir = cloneDest === 'same' && src.group === 'local' ? path.dirname(src.path) : CLONES_DIR;
+    target = path.join(dir, `${newSessionId}.jsonl`);
+    await fsp.writeFile(target, cloned, 'utf8');
+  } else {
+    await fsp.writeFile(target, edited.text, 'utf8');
+  }
+  await scan();
+  const source = await describe(index.get(keyOf(target)));
+  res.json({ source, newSessionId, deleted: edited.deleted, inserted: edited.inserted, resumeByPath: `claude --resume "${target}"`, resumeById: newSessionId && cloneDest === 'same' && src.group === 'local' ? `claude --resume ${newSessionId}` : undefined });
 });
 
 // ---- front buildé ----------------------------------------------------------
