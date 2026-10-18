@@ -10,6 +10,7 @@ import { ChangesBar } from './components/ChangesBar';
 import { AiSearchPanel } from './components/AiSearchPanel';
 import { AiEditModal } from './components/AiEditModal';
 import { HarmonizeModal } from './components/HarmonizeModal';
+import { GoalModal } from './components/GoalModal';
 import { SettingsModal } from './components/SettingsModal';
 import { buildRegex } from './highlight';
 
@@ -55,6 +56,7 @@ export default function App() {
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [aiEditOpen, setAiEditOpen] = useState(false);
   const [harmonizeOpen, setHarmonizeOpen] = useState(false);
+  const [goalOpen, setGoalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const set = useCallback((p: Partial<Filters>) => setF((old) => ({ ...old, ...p })), []);
@@ -386,6 +388,9 @@ export default function App() {
                   <button onClick={() => setSelection(new Set())}>✕</button>
                 </span>
               )}
+              <button className="primary" onClick={() => setGoalOpen(true)} title="Décris un objectif ; l'IA trouve les passages à la source, propose un plan, réécrit, puis harmonise">
+                ◎ Objectif IA
+              </button>
               <button onClick={() => setHarmonizeOpen(true)} title="Réécrire les réponses de Claude pour qu'elles restent cohérentes avec ce qui précède (après tes modifications)">
                 ≈ Harmoniser les réponses
               </button>
@@ -453,6 +458,17 @@ export default function App() {
       )}
       {harmonizeOpen && data && (
         <HarmonizeModal entries={entries} firstEditedI={ops.length ? Math.min(...ops.map((o) => o.i)) : null} selected={selection} onClose={() => setHarmonizeOpen(false)} onAccept={(e, text) => onEdit(e, text)} />
+      )}
+      {goalOpen && data && (
+        <GoalModal
+          entries={entries}
+          onClose={() => setGoalOpen(false)}
+          onAccept={(e, text) => onEdit(e, text)}
+          onHarmonize={() => {
+            setGoalOpen(false);
+            setHarmonizeOpen(true);
+          }}
+        />
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}

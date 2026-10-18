@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseLines, normalize, computeStats, quickSummary, cloneTranscript } from './parse.js';
 import { applyEdits } from './edit.js';
-import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES, aiHarmonize } from './ai.js';
+import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES, aiHarmonize, aiPlan } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -323,6 +323,15 @@ app.post('/api/ai-harmonize', async (req, res) => {
       onResult: (r) => job.progress.push(r),
     }),
   );
+  res.json({ jobId: job.id });
+});
+
+app.post('/api/ai-plan', async (req, res) => {
+  const { transcript, goal, contextChars } = req.body ?? {};
+  if (!Array.isArray(transcript) || !transcript.length) return res.status(400).json({ error: 'Transcription vide' });
+  if (!goal?.trim()) return res.status(400).json({ error: 'Objectif vide' });
+  const st = loadSettings(SETTINGS_FILE);
+  const job = startJob(() => aiPlan(st, { transcript, goal: String(goal), contextChars: Number(contextChars) || undefined }));
   res.json({ jobId: job.id });
 });
 

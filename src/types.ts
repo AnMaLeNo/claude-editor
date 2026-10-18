@@ -205,6 +205,22 @@ export interface HarmonizeItem {
   contextMessages?: number;
 }
 
+export interface PlanPassage {
+  ref: string;
+  why: string;
+  instruction: string;
+}
+
+export interface PlanResult {
+  diagnostic: string;
+  passages: PlanPassage[];
+  costUSD?: number;
+  durationMs?: number;
+  model?: string;
+  messages: number;
+  omitted: number;
+}
+
 export interface Job<T> {
   id: string;
   status: 'running' | 'done' | 'error';
