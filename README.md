@@ -42,6 +42,18 @@ Côté serveur (`server/edit.js`), `applyEdits()` travaille sur les lignes d'ori
 
 Vérifié avec Claude Code 2.1.302 : un fichier avec une réponse réécrite, un échange inséré et un appel d'outil supprimé se reprend avec `claude --resume`, et Claude « se souvient » du texte modifié et de l'échange inséré, mais plus de l'appel supprimé.
 
+## Recherche IA (JEV) et réécriture IA (`claude -p`)
+
+Deux usages IA bien séparés, réglables via **⚙ IA** (stocké côté serveur dans `data/settings.json`, la clé OpenRouter n'est jamais renvoyée au navigateur) :
+
+- **Recherche IA** — modèle de décision [JEV](https://openrouter.ai/docs/guides/community/jev) (`typesafe/jev-1.13`, API Decisions d'OpenRouter : sorties typées Choice / Noul / Score, pas de texte généré, ~0,04 $ par million de tokens d'entrée). Pipeline en deux temps :
+  1. **Routage** : un premier appel JEV classe la recherche sur deux axes — *portée* (prompts / réponses de Claude / sorties d'outils / tout) et *type* (mention d'une entité, propos négatifs, citation d'un document, condition/règle, action technique, général). Le routage s'affiche en menus modifiables (avec les probabilités) ; tu peux le corriger et relancer.
+  2. **Analyse** : les entrées de la portée sont envoyées par lots (texte brut uniquement), avec pour chacune un Noul « répond à la recherche ? » et un Score sur une échelle à 4 niveaux propre au type. Résultats triés, curseur de seuil, coût / tokens / lots affichés, chaque hit cliquable et cochable.
+  Lignes techniques et contexte injecté exclus par défaut (option « technique + contexte »).
+- **Réécriture IA** — tu coches des entrées (prompt, réponse, résultat d'outil), tu écris une instruction ; chaque texte est envoyé **seul** à `claude -p` (`--tools ""`, `--max-turns 1`, system prompt neutre, `--no-session-persistence`) avec l'instruction : **aucune indication** sur la nature du texte, son rôle, l'outil ou le contexte de la conversation. Tu vois avant/après, tu corriges ou acceptes chaque proposition ; les acceptées deviennent des modifications en attente à enregistrer comme n'importe quelle édition (jamais écrites automatiquement).
+
+`claude -p` utilise ton login Claude Code ; pour passer par OpenRouter, ajoute dans les variables d'environnement du panneau : `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, `ANTHROPIC_AUTH_TOKEN=<clé>`.
+
 ## Cloner / continuer une session
 
 Le clone reproduit `/branch` (`createFork` dans Claude Code) : mêmes `uuid`, `sessionId` réécrit sur chaque ligne, marqueur `forkedFrom`, fichier nommé `<nouveauSessionId>.jsonl`.

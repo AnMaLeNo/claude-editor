@@ -104,8 +104,77 @@ async function jevRequest(s, body) {
   return json;
 }
 
-export async function aiSearch(s, { entries, query, includeMeta, onProgress }) {
-  const pool = entries.filter((e) => (includeMeta || (e.kind !== 'meta' && e.kind !== 'context')) && e.text.trim());
+// ---- routeur : JEV classe la recherche (portée + type) avant de la lancer -----
+export const ROUTE_SCOPES = {
+  prompts: { label: 'Prompts utilisateur', kinds: ['prompt'], desc: "Uniquement ce que l'utilisateur a écrit (ses prompts, ses demandes)" },
+  reponses: { label: 'Réponses de Claude', kinds: ['assistant'], desc: 'Uniquement ce que Claude a répondu (ses textes, ses affirmations)' },
+  outils: { label: "Sorties d'outils", kinds: ['tool_result', 'tool_use'], desc: "Uniquement les sorties d'outils : résultats de commandes, contenus de fichiers lus, erreurs" },
+  tout: { label: 'Toute la conversation', kinds: null, desc: 'Toute la conversation, la recherche ne nomme pas de partie précise' },
+};
+
+export const ROUTE_TYPES = {
+  entite: {
+    label: "Mention d'une entité / d'un sujet",
+    desc: "Mention d'une entité ou d'un sujet précis : entreprise, personne, produit, lieu, concept nommé",
+    match: ["Le texte mentionne explicitement l'entité ou le sujet visé par la recherche, ou en parle clairement.", "Le texte ne mentionne pas cette entité ni ce sujet."],
+    scale: ['ne le mentionne pas', 'allusion ou lien indirect', 'le mentionne au passage', 'en parle de façon centrale'],
+  },
+  negatif: {
+    label: 'Propos négatifs / critiques',
+    desc: 'Propos négatifs, critiques, refus, avertissements, jugements défavorables',
+    match: ['Le texte exprime un propos négatif, une critique, un refus ou un avertissement en lien avec la recherche.', "Le texte est neutre ou positif, ou n'a pas de rapport avec la recherche."],
+    scale: ['rien de négatif', 'réserve légère', 'critique ou réserve nette', 'propos franchement négatif, refus ou avertissement'],
+  },
+  citation: {
+    label: "Citation / référence à un document",
+    desc: 'Citation ou référence à un document, une source, un rapport, un fichier nommé',
+    match: ['Le texte cite ou référence explicitement le document ou la source visé(e) par la recherche.', 'Le texte ne cite ni ne référence ce document.'],
+    scale: ['aucune référence', 'mention vague', 'référence nommée', 'citation directe ou extrait du document'],
+  },
+  condition: {
+    label: 'Condition / règle / exigence',
+    desc: 'Condition, règle, contrainte, exigence, clause',
+    match: ['Le texte énonce une condition, une règle, une contrainte ou une exigence en lien avec la recherche.', "Le texte n'énonce pas de condition ni de règle sur ce sujet."],
+    scale: ['aucune condition', 'évoque le sujet sans poser de condition', 'pose une condition en partie', 'énonce précisément la condition ou la règle recherchée'],
+  },
+  technique: {
+    label: 'Action technique (code, commande, erreur)',
+    desc: 'Action technique : modification de code, commande exécutée, erreur, build',
+    match: ["Le texte contient l'action technique recherchée (code modifié, commande lancée, erreur, résultat de build…).", "Le texte ne contient pas cette action technique."],
+    scale: ['aucun rapport', 'en parle sans la réaliser', "contient l'action en partie", "contient exactement l'action recherchée"],
+  },
+  general: {
+    label: 'Recherche générale',
+    desc: 'Autre / recherche générale ne rentrant dans aucun type',
+    match: ["L'entrée contient ou constitue directement ce que l'utilisateur recherche.", "L'entrée n'a pas de rapport avec la recherche, ou ne fait qu'y faire allusion."],
+    scale: SCALE,
+  },
+};
+
+const pick = (obj, key) => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, v[key]]));
+
+export async function aiRoute(s, query) {
+  const r = await jevRequest(s, {
+    state: { recherche: query },
+    questions: {
+      scope: { type: 'choice', instructions: "Sur quelles parties d'une conversation entre un utilisateur et l'assistant Claude la recherche state.recherche doit-elle porter ?", criteria: pick(ROUTE_SCOPES, 'desc') },
+      type: { type: 'choice', instructions: 'Quel est le type de la recherche state.recherche ?', criteria: pick(ROUTE_TYPES, 'desc') },
+    },
+  });
+  const a = r.answers ?? {};
+  return {
+    scope: a.scope?.choice in ROUTE_SCOPES ? a.scope.choice : 'tout',
+    type: a.type?.choice in ROUTE_TYPES ? a.type.choice : 'general',
+    scopeP: a.scope?.probabilities ?? {},
+    typeP: a.type?.probabilities ?? {},
+    costUSD: r.usage?.cost ?? 0,
+  };
+}
+
+export async function aiSearch(s, { entries, query, includeMeta, scope = 'tout', type = 'general', onProgress }) {
+  const sc = ROUTE_SCOPES[scope] ?? ROUTE_SCOPES.tout;
+  const ty = ROUTE_TYPES[type] ?? ROUTE_TYPES.general;
+  const pool = entries.filter((e) => (sc.kinds ? sc.kinds.includes(e.kind) : includeMeta || (e.kind !== 'meta' && e.kind !== 'context')) && e.text.trim());
   const batches = [];
   let cur = [];
   let size = 0;
@@ -134,16 +203,13 @@ export async function aiSearch(s, { entries, query, includeMeta, onProgress }) {
       state.entrees[id] = e.text.slice(0, ENTRY_MAX_CHARS);
       questions[`${id}_match`] = {
         type: 'noul',
-        instructions: `L'entrée ${id} (state.entrees.${id}) correspond-elle à ce que cherche l'utilisateur (state.recherche_de_l_utilisateur) ?`,
-        criteria: {
-          true: "L'entrée contient ou constitue directement ce que l'utilisateur recherche.",
-          false: "L'entrée n'a pas de rapport avec la recherche, ou ne fait qu'y faire allusion.",
-        },
+        instructions: `Le texte ${id} (state.entrees.${id}) répond-il à la recherche de l'utilisateur (state.recherche_de_l_utilisateur) ?`,
+        criteria: { true: ty.match[0], false: ty.match[1] },
       };
       questions[`${id}_score`] = {
         type: 'score',
-        instructions: `À quel point l'entrée ${id} (state.entrees.${id}) est-elle pertinente pour la recherche de l'utilisateur (state.recherche_de_l_utilisateur) ?`,
-        criteria: SCALE,
+        instructions: `Pour la recherche de l'utilisateur (state.recherche_de_l_utilisateur), où se situe le texte ${id} (state.entrees.${id}) sur l'échelle ?`,
+        criteria: ty.scale,
       };
     }
     const r = await jevRequest(s, { state, questions });
@@ -152,13 +218,13 @@ export async function aiSearch(s, { entries, query, includeMeta, onProgress }) {
     for (const e of batch) {
       const id = `L${e.i + 1}`;
       const m = r.answers?.[`${id}_match`];
-      const sc = r.answers?.[`${id}_score`];
-      hits.push({ line: e.i + 1, i: e.i, p: m?.noul ?? 0, score: sc?.score ?? 0, confidence: sc?.confidence ?? 0 });
+      const scr = r.answers?.[`${id}_score`];
+      hits.push({ line: e.i + 1, i: e.i, p: m?.noul ?? 0, score: scr?.score ?? 0, confidence: scr?.confidence ?? 0 });
     }
     onProgress?.({ batch: b + 1, batches: batches.length, entries: hits.length, total: pool.length });
   }
   hits.sort((a, b) => b.score - a.score || b.p - a.p);
-  return { hits, costUSD: cost, inputTokens: tokens, batches: batches.length, scanned: pool.length, model: s.jevModel || 'typesafe/jev-1.13', scale: SCALE };
+  return { hits, costUSD: cost, inputTokens: tokens, batches: batches.length, scanned: pool.length, model: s.jevModel || 'typesafe/jev-1.13', scale: ty.scale, scope, type };
 }
 
 // ---- réécriture IA ---------------------------------------------------------

@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseLines, normalize, computeStats, quickSummary, cloneTranscript } from './parse.js';
 import { applyEdits } from './edit.js';
-import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId } from './ai.js';
+import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -263,14 +263,31 @@ app.get('/api/jobs/:id', (req, res) => {
   res.json(job);
 });
 
+app.get('/api/ai-routes', (_req, res) =>
+  res.json({
+    scopes: Object.fromEntries(Object.entries(ROUTE_SCOPES).map(([k, v]) => [k, { label: v.label, desc: v.desc }])),
+    types: Object.fromEntries(Object.entries(ROUTE_TYPES).map(([k, v]) => [k, { label: v.label, desc: v.desc, scale: v.scale }])),
+  }),
+);
+
+app.post('/api/ai-route', async (req, res) => {
+  const { query } = req.body ?? {};
+  if (!query?.trim()) return res.status(400).json({ error: 'Demande vide' });
+  try {
+    res.json(await aiRoute(loadSettings(SETTINGS_FILE), query.trim()));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.post('/api/sessions/:key/ai-search', async (req, res) => {
   const src = await resolveKey(req.params.key);
   if (!src) return res.status(404).json({ error: 'Session inconnue' });
-  const { query, includeMeta = false } = req.body ?? {};
+  const { query, includeMeta = false, scope = 'tout', type = 'general' } = req.body ?? {};
   if (!query?.trim()) return res.status(400).json({ error: 'Demande vide' });
   const text = await fsp.readFile(src.path, 'utf8');
   const entries = normalize(parseLines(text).raw);
-  const job = startJob((job) => aiSearch(loadSettings(SETTINGS_FILE), { entries, query: query.trim(), includeMeta, onProgress: (p) => job.progress.push(p) }));
+  const job = startJob((job) => aiSearch(loadSettings(SETTINGS_FILE), { entries, query: query.trim(), includeMeta, scope, type, onProgress: (p) => job.progress.push(p) }));
   res.json({ jobId: job.id });
 });
 

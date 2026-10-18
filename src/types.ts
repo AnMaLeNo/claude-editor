@@ -166,6 +166,21 @@ export interface AiSearchResult {
   scanned: number;
   model: string;
   scale: string[];
+  scope: string;
+  type: string;
+}
+
+export interface AiRoutes {
+  scopes: Record<string, { label: string; desc: string }>;
+  types: Record<string, { label: string; desc: string; scale: string[] }>;
+}
+
+export interface AiRoute {
+  scope: string;
+  type: string;
+  scopeP: Record<string, number>;
+  typeP: Record<string, number>;
+  costUSD: number;
 }
 
 export interface AiEditItem {

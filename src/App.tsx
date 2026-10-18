@@ -201,12 +201,12 @@ export default function App() {
     }
   };
 
-  const runAiSearch = async (q: string, includeMeta: boolean) => {
+  const runAiSearch = async (q: string, includeMeta: boolean, scope: string, type: string) => {
     if (!selected) return;
     setAiRunning(true);
     setAiProgress('');
     try {
-      const { jobId } = await api.aiSearch(selected, q, includeMeta);
+      const { jobId } = await api.aiSearch(selected, q, includeMeta, scope, type);
       const r = await api.waitJob<AiSearchResult>(jobId, (p) => {
         const last = p[p.length - 1] as { batch: number; batches: number; entries: number; total: number } | undefined;
         if (last) setAiProgress(`lot ${last.batch}/${last.batches} · ${last.entries}/${last.total} entrées analysées`);

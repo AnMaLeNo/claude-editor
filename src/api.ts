@@ -1,4 +1,4 @@
-import type { AiSettings, CloneResult, EditOp, EditResult, Job, SessionData, Source } from './types';
+import type { AiSettings, CloneResult, EditOp, EditResult, Job, SessionData, Source, AiRoute, AiRoutes } from './types';
 
 async function j<T>(r: Response): Promise<T> {
   const data = await r.json().catch(() => ({}));
@@ -22,8 +22,10 @@ export const api = {
     fetch(`/api/sessions/${key}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<EditResult>(r)),
   settings: () => fetch('/api/settings').then((r) => j<AiSettings>(r)),
   saveSettings: (s: Partial<AiSettings>) => fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) }).then((r) => j<AiSettings>(r)),
-  aiSearch: (key: string, query: string, includeMeta: boolean) =>
-    fetch(`/api/sessions/${key}/ai-search`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, includeMeta }) }).then((r) => j<{ jobId: string }>(r)),
+  aiRoutes: () => fetch('/api/ai-routes').then((r) => j<AiRoutes>(r)),
+  aiRoute: (query: string) => fetch('/api/ai-route', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) }).then((r) => j<AiRoute>(r)),
+  aiSearch: (key: string, query: string, includeMeta: boolean, scope: string, type: string) =>
+    fetch(`/api/sessions/${key}/ai-search`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, includeMeta, scope, type }) }).then((r) => j<{ jobId: string }>(r)),
   aiEdit: (items: { ref: string; text: string }[], instruction: string) =>
     fetch('/api/ai-edit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items, instruction }) }).then((r) => j<{ jobId: string }>(r)),
   job: <T>(id: string) => fetch(`/api/jobs/${id}`).then((r) => j<Job<T>>(r)),

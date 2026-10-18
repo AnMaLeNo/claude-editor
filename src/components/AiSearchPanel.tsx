@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { AiSearchResult, Entry } from '../types';
+import { useEffect, useState } from 'react';
+import type { AiRoute, AiRoutes, AiSearchResult, Entry } from '../types';
+import { api } from '../api';
 import { KIND_INFO } from '../types';
 
 export function AiSearchPanel({
@@ -18,7 +19,7 @@ export function AiSearchPanel({
   entries: Entry[];
   running: boolean;
   progress: string;
-  onRun: (q: string, includeMeta: boolean) => void;
+  onRun: (q: string, includeMeta: boolean, scope: string, type: string) => void;
   onGoto: (i: number) => void;
   selected: Set<number>;
   onToggle: (i: number) => void;
@@ -28,6 +29,33 @@ export function AiSearchPanel({
   const [q, setQ] = useState('');
   const [includeMeta, setIncludeMeta] = useState(false);
   const [minScore, setMinScore] = useState(1.5);
+  const [routes, setRoutes] = useState<AiRoutes | null>(null);
+  const [route, setRoute] = useState<AiRoute | null>(null);
+  const [scope, setScope] = useState('tout');
+  const [type, setType] = useState('general');
+  const [routing, setRouting] = useState(false);
+  const [routeErr, setRouteErr] = useState('');
+  useEffect(() => {
+    api.aiRoutes().then(setRoutes).catch(() => setRoutes(null));
+  }, []);
+  // 1) un premier JEV classe la recherche (portée + type), 2) la recherche part avec les questions propres à ce type
+  const analyseAndRun = async () => {
+    if (!q.trim() || running || routing) return;
+    setRouting(true);
+    setRouteErr('');
+    try {
+      const r = await api.aiRoute(q.trim());
+      setRoute(r);
+      setScope(r.scope);
+      setType(r.type);
+      onRun(q.trim(), includeMeta, r.scope, r.type);
+    } catch (e) {
+      setRouteErr((e as Error).message);
+    } finally {
+      setRouting(false);
+    }
+  };
+  const pct = (m: Record<string, number> | undefined, k: string) => Math.round(((m ?? {})[k] ?? 0) * 100);
   const byI = new Map(entries.map((e) => [e.i, e]));
   const shown = (result?.hits ?? []).filter((h) => h.score >= minScore && byI.has(h.i));
   return (
@@ -38,15 +66,49 @@ export function AiSearchPanel({
           placeholder="Décris ce que tu cherches (ex. « les moments où Claude a modifié un fichier de config », « les erreurs de compilation »…)"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && q.trim() && !running && onRun(q.trim(), includeMeta)}
+          onKeyDown={(e) => e.key === 'Enter' && analyseAndRun()}
         />
-        <button className="primary" disabled={running || !q.trim()} onClick={() => onRun(q.trim(), includeMeta)}>
-          {running ? 'JEV analyse…' : 'Rechercher avec JEV'}
+        <button className="primary" disabled={running || routing || !q.trim()} onClick={analyseAndRun} title="JEV classe d'abord ta recherche (portée + type), puis l'applique à la conversation">
+          {routing ? 'JEV classe la recherche…' : running ? 'JEV analyse…' : 'Rechercher avec JEV'}
         </button>
         <label className="opt" title="Inclure les lignes techniques et le contexte injecté">
           <input type="checkbox" checked={includeMeta} onChange={(e) => setIncludeMeta(e.target.checked)} /> technique + contexte
         </label>
       </div>
+      {routeErr && <div className="hint err">Routage impossible : {routeErr}</div>}
+      {routes && (route || result) && (
+        <div className="row ai-route">
+          <span className="dim">Routage JEV :</span>
+          <label className="opt" title={route ? Object.entries(routes.scopes).map(([k, v]) => `${v.label} ${pct(route.scopeP, k)} %`).join(' · ') : ''}>
+            portée
+            <select value={scope} onChange={(e) => setScope(e.target.value)} className={route && pct(route.scopeP, route.scope) < 70 && scope === route.scope ? 'warn' : ''}>
+              {Object.entries(routes.scopes).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label}
+                  {route ? ` (${pct(route.scopeP, k)} %)` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="opt" title={route ? Object.entries(routes.types).map(([k, v]) => `${v.label} ${pct(route.typeP, k)} %`).join(' · ') : ''}>
+            type
+            <select value={type} onChange={(e) => setType(e.target.value)} className={route && pct(route.typeP, route.type) < 70 && type === route.type ? 'warn' : ''}>
+              {Object.entries(routes.types).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label}
+                  {route ? ` (${pct(route.typeP, k)} %)` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(scope !== (result?.scope ?? route?.scope) || type !== (result?.type ?? route?.type)) && (
+            <button className="chip link" disabled={running || !q.trim()} onClick={() => onRun(q.trim(), includeMeta, scope, type)}>
+              relancer avec ce routage
+            </button>
+          )}
+          <span className="hint">{routes.types[type]?.desc}</span>
+        </div>
+      )}
       {running && <div className="hint">{progress || 'Envoi des lots à JEV…'}</div>}
       {result && (
         <>
