@@ -36,6 +36,8 @@ export function EntryCard({
   onDelete,
   onRestore,
   onInsert,
+  selected,
+  onToggleSelect,
 }: {
   e: Entry;
   re: RegExp | null;
@@ -48,6 +50,8 @@ export function EntryCard({
   onDelete: (e: Entry) => void;
   onRestore: (e: Entry) => void;
   onInsert: (e: Entry, role: 'user' | 'assistant') => void;
+  selected?: boolean;
+  onToggleSelect?: (i: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -99,8 +103,11 @@ export function EntryCard({
   }, [e.text, e.kind, re, open]);
 
   return (
-    <article id={`e-${e.i}`} className={`card kind-${e.kind} ${e.isError ? 'error' : ''} ${isCurrent ? 'current' : ''} ${e.sidechain ? 'sidechain' : ''} ${e.deleted ? 'deleted' : ''} ${e.inserted ? 'inserted' : ''} ${e.edited ? 'edited' : ''}`} style={{ ['--c' as string]: info.color }}>
+    <article id={`e-${e.i}`} className={`card kind-${e.kind} ${e.isError ? 'error' : ''} ${isCurrent ? 'current' : ''} ${e.sidechain ? 'sidechain' : ''} ${e.deleted ? 'deleted' : ''} ${e.inserted ? 'inserted' : ''} ${e.edited ? 'edited' : ''} ${selected ? 'selected' : ''}`} style={{ ['--c' as string]: info.color }}>
       <header>
+        {editable && onToggleSelect && (
+          <input type="checkbox" className="select" checked={!!selected} onChange={() => onToggleSelect(e.i)} title="Cocher pour une modification IA groupée" />
+        )}
         <span className="kind-dot" />
         <span className="title">{e.title}</span>
         {e.inserted && <span className="badge new">nouveau</span>}

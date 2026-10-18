@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseLines, normalize, computeStats, quickSummary, cloneTranscript } from './parse.js';
 import { applyEdits } from './edit.js';
+import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -20,9 +21,10 @@ const CLONES_DIR = path.join(DATA_DIR, 'clones');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 for (const d of [UPLOADS_DIR, CLONES_DIR]) fs.mkdirSync(d, { recursive: true });
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '50mb' }));
 const upload = multer({ dest: path.join(DATA_DIR, 'tmp'), limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
 
 // ---- index des fichiers ----------------------------------------------------
@@ -220,6 +222,90 @@ app.post('/api/sessions/:key/edit', async (req, res) => {
   await scan();
   const source = await describe(index.get(keyOf(target)));
   res.json({ source, newSessionId, deleted: edited.deleted, inserted: edited.inserted, resumeByPath: `claude --resume "${target}"`, resumeById: newSessionId && cloneDest === 'same' && src.group === 'local' ? `claude --resume ${newSessionId}` : undefined });
+});
+
+// ---- IA ---------------------------------------------------------------------
+// La clé OpenRouter n'est jamais renvoyée au navigateur : seulement « définie » ou non.
+const publicSettings = (st) => ({ ...st, openrouterApiKey: undefined, hasOpenrouterKey: !!(st.openrouterApiKey || process.env.OPENROUTER_API_KEY) });
+
+app.get('/api/settings', (_req, res) => res.json(publicSettings(loadSettings(SETTINGS_FILE))));
+app.put('/api/settings', async (req, res) => {
+  const b = req.body ?? {};
+  const st = await saveSettings(SETTINGS_FILE, {
+    jevModel: String(b.jevModel ?? 'typesafe/jev-1.13').trim() || 'typesafe/jev-1.13',
+    openrouterApiKey: b.openrouterApiKey === undefined ? loadSettings(SETTINGS_FILE).openrouterApiKey : String(b.openrouterApiKey ?? '').trim(),
+    claudePath: String(b.claudePath ?? 'claude').trim() || 'claude',
+    model: String(b.model ?? '').trim(),
+    effort: ['', 'low', 'medium', 'high', 'xhigh', 'max'].includes(b.effort) ? b.effort : '',
+    extraEnv: Object.fromEntries(Object.entries(b.extraEnv ?? {}).filter(([k, v]) => /^[A-Z_][A-Z0-9_]*$/i.test(k) && typeof v === 'string')),
+    searchMaxTurns: Math.max(5, Math.min(200, Number(b.searchMaxTurns) || 40)),
+    timeoutSec: Math.max(30, Math.min(3600, Number(b.timeoutSec) || 600)),
+    editConcurrency: Math.max(1, Math.min(8, Number(b.editConcurrency) || 3)),
+  });
+  res.json(publicSettings(st));
+});
+
+// Jobs asynchrones (la recherche IA peut durer plusieurs minutes) : POST lance, GET /api/jobs/:id suit.
+const jobs = new Map();
+const startJob = (fn) => {
+  const id = newJobId();
+  const job = { id, status: 'running', startedAt: Date.now(), progress: [] };
+  jobs.set(id, job);
+  fn(job)
+    .then((result) => Object.assign(job, { status: 'done', result, endedAt: Date.now() }))
+    .catch((e) => Object.assign(job, { status: 'error', error: e.message, endedAt: Date.now() }));
+  setTimeout(() => jobs.delete(id), 3600 * 1000).unref();
+  return job;
+};
+app.get('/api/jobs/:id', (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job inconnu ou expiré' });
+  res.json(job);
+});
+
+app.get('/api/ai-routes', (_req, res) =>
+  res.json({
+    scopes: Object.fromEntries(Object.entries(ROUTE_SCOPES).map(([k, v]) => [k, { label: v.label, desc: v.desc }])),
+    types: Object.fromEntries(Object.entries(ROUTE_TYPES).map(([k, v]) => [k, { label: v.label, desc: v.desc, scale: v.scale }])),
+  }),
+);
+
+app.post('/api/ai-route', async (req, res) => {
+  const { query } = req.body ?? {};
+  if (!query?.trim()) return res.status(400).json({ error: 'Demande vide' });
+  try {
+    res.json(await aiRoute(loadSettings(SETTINGS_FILE), query.trim()));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post('/api/sessions/:key/ai-search', async (req, res) => {
+  const src = await resolveKey(req.params.key);
+  if (!src) return res.status(404).json({ error: 'Session inconnue' });
+  const { query, includeMeta = false, scope = 'tout', type = 'general' } = req.body ?? {};
+  if (!query?.trim()) return res.status(400).json({ error: 'Demande vide' });
+  const text = await fsp.readFile(src.path, 'utf8');
+  const entries = normalize(parseLines(text).raw);
+  const job = startJob((job) => aiSearch(loadSettings(SETTINGS_FILE), { entries, query: query.trim(), includeMeta, scope, type, onProgress: (p) => job.progress.push(p) }));
+  res.json({ jobId: job.id });
+});
+
+// items : [{ ref, text }] — on ne transmet à claude que `text` et l'instruction, rien d'autre.
+app.post('/api/ai-edit', async (req, res) => {
+  const { items, instruction } = req.body ?? {};
+  if (!instruction?.trim()) return res.status(400).json({ error: 'Instruction vide' });
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Aucun texte à modifier' });
+  const st = loadSettings(SETTINGS_FILE);
+  const job = startJob(async (job) => {
+    const results = await aiEditMany(
+      st,
+      items.map((it) => ({ text: String(it.text ?? ''), instruction: instruction.trim() })),
+      (k, r) => job.progress.push({ ref: items[k].ref, ok: r.ok }),
+    );
+    return { items: items.map((it, k) => ({ ref: it.ref, ...results[k] })) };
+  });
+  res.json({ jobId: job.id });
 });
 
 // ---- front buildé ----------------------------------------------------------
