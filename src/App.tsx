@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CloneResult, EditOp, Entry, SessionData, Source } from './types';
+import type { AiSearchResult, CloneResult, EditOp, Entry, SessionData, Source } from './types';
 import { api } from './api';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar, DEFAULT_KINDS, type Filters } from './components/Toolbar';
@@ -7,6 +7,9 @@ import { EntryCard } from './components/EntryCard';
 import { RightPanel } from './components/RightPanel';
 import { Modal } from './components/Modal';
 import { ChangesBar } from './components/ChangesBar';
+import { AiSearchPanel } from './components/AiSearchPanel';
+import { AiEditModal } from './components/AiEditModal';
+import { SettingsModal } from './components/SettingsModal';
 import { buildRegex } from './highlight';
 
 const initialFilters: Filters = {
@@ -44,6 +47,13 @@ export default function App() {
   const [config, setConfig] = useState<{ projectsDir: string; dataDir: string } | null>(null);
   const [ops, setOps] = useState<EditOp[]>([]);
   const [reloadTick, setReloadTick] = useState(0);
+  const [mode, setMode] = useState<'text' | 'ai'>('text');
+  const [aiResult, setAiResult] = useState<AiSearchResult | null>(null);
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiProgress, setAiProgress] = useState('');
+  const [selection, setSelection] = useState<Set<number>>(new Set());
+  const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const set = useCallback((p: Partial<Filters>) => setF((old) => ({ ...old, ...p })), []);
   const dq = useDebounced(f.q, 150);
@@ -76,6 +86,8 @@ export default function App() {
       .then((d) => {
         setData(d);
         setOps([]);
+        setAiResult(null);
+        setSelection(new Set());
         setF((old) => ({ ...initialFilters, q: old.q, regex: old.regex, caseSensitive: old.caseSensitive, word: old.word, kinds: old.kinds }));
       })
       .catch((e) => notify(`Erreur : ${e.message}`))
@@ -188,6 +200,32 @@ export default function App() {
       setSaving(false);
     }
   };
+
+  const runAiSearch = async (q: string, includeMeta: boolean) => {
+    if (!selected) return;
+    setAiRunning(true);
+    setAiProgress('');
+    try {
+      const { jobId } = await api.aiSearch(selected, q, includeMeta);
+      const r = await api.waitJob<AiSearchResult>(jobId, (p) => {
+        const last = p[p.length - 1] as { batch: number; batches: number; entries: number; total: number } | undefined;
+        if (last) setAiProgress(`lot ${last.batch}/${last.batches} · ${last.entries}/${last.total} entrées analysées`);
+      });
+      setAiResult(r);
+    } catch (e) {
+      notify(`Recherche IA impossible : ${(e as Error).message}`);
+    } finally {
+      setAiRunning(false);
+    }
+  };
+  const toggleSelect = (i: number) =>
+    setSelection((s) => {
+      const n = new Set(s);
+      if (n.has(i)) n.delete(i);
+      else n.add(i);
+      return n;
+    });
+  const selectedEntries = useMemo(() => (data ? data.entries.filter((e) => selection.has(e.i)) : []), [data, selection]);
 
   const re = useMemo(() => buildRegex(dq, { regex: f.regex, caseSensitive: f.caseSensitive, word: f.word }), [dq, f.regex, f.caseSensitive, f.word]);
   const reTest = useMemo(() => (re ? new RegExp(re.source, re.flags.replace('g', '')) : null), [re]);
@@ -328,7 +366,44 @@ export default function App() {
             <div className="session-head">
               <h2 title={data.stats.firstPrompt}>{data.stats.title ?? data.stats.firstPrompt ?? data.source.fileName}</h2>
               <span className="dim mono">{data.stats.sessionId}</span>
+              <span className="spacer" />
+              <span className="mode-switch" title="Recherche texte (locale) ou recherche IA (JEV)">
+                <button className={mode === 'text' ? 'on' : ''} onClick={() => setMode('text')}>
+                  Recherche texte
+                </button>
+                <button className={mode === 'ai' ? 'on' : ''} onClick={() => setMode('ai')}>
+                  Recherche IA
+                </button>
+              </span>
+              {selection.size > 0 && (
+                <span className="sel-bar">
+                  <b>{selection.size}</b> cochée{selection.size > 1 ? 's' : ''}
+                  <button className="primary" onClick={() => setAiEditOpen(true)}>
+                    Modifier avec l'IA
+                  </button>
+                  <button onClick={() => setSelection(new Set())}>✕</button>
+                </span>
+              )}
+              <button onClick={() => setSettingsOpen(true)} title="Paramètres IA (JEV, claude -p)">
+                ⚙ IA
+              </button>
             </div>
+            {mode === 'ai' && (
+              <div className="toolbar">
+                <AiSearchPanel
+                  result={aiResult}
+                  entries={entries}
+                  running={aiRunning}
+                  progress={aiProgress}
+                  onRun={runAiSearch}
+                  onGoto={(i) => onGoto(i)}
+                  selected={selection}
+                  onToggle={toggleSelect}
+                  onSelectAll={(is) => setSelection(new Set([...selection, ...is.filter((i) => ['prompt', 'assistant', 'tool_result'].includes(data.entries.find((e) => e.i === i)?.kind ?? ''))]))}
+                  onEditSelection={() => setAiEditOpen(true)}
+                />
+              </div>
+            )}
             <Toolbar f={f} set={set} stats={data.stats} matches={matched.length} shown={visible.length} total={data.entries.length} onPrev={() => go(-1)} onNext={() => go(1)} current={Math.min(current, Math.max(0, matched.length - 1))} />
             <div className="timeline">
               {shownList.length === 0 && <div className="empty">Rien à afficher avec ces filtres.</div>}
@@ -349,7 +424,7 @@ export default function App() {
                     )}
                   </div>
                   {g.items.map((e) => (
-                    <EntryCard key={e.inserted ? `ins-${e.insertId}` : e.i} e={e} re={re} isCurrent={e.i === currentI} onShowRaw={showRaw} onGoto={onGoto} onFocusTurn={(t) => set({ turn: t })} forceOpen={!!re && matched.includes(e)} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore} onInsert={onInsert} />
+                    <EntryCard key={e.inserted ? `ins-${e.insertId}` : e.i} e={e} re={re} isCurrent={e.i === currentI} onShowRaw={showRaw} onGoto={onGoto} onFocusTurn={(t) => set({ turn: t })} forceOpen={!!re && matched.includes(e)} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore} onInsert={onInsert} selected={selection.has(e.i)} onToggleSelect={toggleSelect} />
                   ))}
                 </section>
               ))}
@@ -364,6 +439,14 @@ export default function App() {
           <pre className="raw">{JSON.stringify(raw.json, null, 2)}</pre>
         </Modal>
       )}
+      {aiEditOpen && selectedEntries.length > 0 && (
+        <AiEditModal
+          entries={selectedEntries}
+          onClose={() => setAiEditOpen(false)}
+          onAccept={(e, text) => onEdit(e, text)}
+        />
+      )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   );

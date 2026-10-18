@@ -136,3 +136,54 @@ export const KIND_INFO: Record<Kind, { label: string; color: string; help: strin
   summary: { label: 'Résumés / titres', color: '#f78fb3', help: 'Titre de session, résumé de compaction.' },
   meta: { label: 'Technique', color: '#8d99ae', help: 'Lignes internes : file d\'attente, requêtes API, coût, dernier prompt…' },
 };
+
+export interface AiSettings {
+  jevModel: string;
+  hasOpenrouterKey?: boolean;
+  openrouterApiKey?: string;
+  claudePath: string;
+  model: string;
+  effort: '' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  extraEnv: Record<string, string>;
+  searchMaxTurns: number;
+  timeoutSec: number;
+  editConcurrency: number;
+}
+
+export interface AiHit {
+  line: number;
+  i: number;
+  p: number;
+  score: number;
+  confidence: number;
+}
+
+export interface AiSearchResult {
+  hits: AiHit[];
+  costUSD: number;
+  inputTokens: number;
+  batches: number;
+  scanned: number;
+  model: string;
+  scale: string[];
+}
+
+export interface AiEditItem {
+  ref: string;
+  ok: boolean;
+  text?: string;
+  error?: string;
+  costUSD?: number;
+  durationMs?: number;
+  model?: string;
+}
+
+export interface Job<T> {
+  id: string;
+  status: 'running' | 'done' | 'error';
+  progress: unknown[];
+  result?: T;
+  error?: string;
+  startedAt: number;
+  endedAt?: number;
+}
