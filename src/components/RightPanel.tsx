@@ -83,10 +83,16 @@ export function RightPanel({ data, onCloned, onDeleted }: { data: SessionData; o
           </p>
           <input placeholder="Titre du clone (optionnel)" value={title} onChange={(e) => setTitle(e.target.value)} />
           <label className="opt">
-            <input type="radio" checked={dest === 'same'} onChange={() => setDest('same')} disabled={source.group !== 'local'} /> à côté de l'original (dans ~/.claude/projects) → <code>claude --resume &lt;id&gt;</code> depuis le même dossier
+            <input type="radio" checked={dest === 'same'} onChange={() => setDest('same')} disabled={source.group !== 'local'} />
+            <span>
+              à côté de l'original (dans ~/.claude/projects) → <code>claude --resume &lt;id&gt;</code> depuis le même dossier
+            </span>
           </label>
           <label className="opt">
-            <input type="radio" checked={dest === 'workspace'} onChange={() => setDest('workspace')} /> dans l'espace de travail de l'app → télécharger puis <code>claude --resume &lt;chemin&gt;</code>
+            <input type="radio" checked={dest === 'workspace'} onChange={() => setDest('workspace')} />
+            <span>
+              dans l'espace de travail de l'app → télécharger puis <code>claude --resume &lt;chemin&gt;</code>
+            </span>
           </label>
           <button className="primary" onClick={clone} disabled={busy}>
             {busy ? 'Clonage…' : 'Cloner cette session'}

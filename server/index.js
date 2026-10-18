@@ -43,8 +43,9 @@ async function scan() {
   const sources = [];
   const add = (p, group, project) => {
     const key = keyOf(p);
-    index.set(key, { path: p, group, project });
-    sources.push({ key, path: p, group, project });
+    const src = { key, path: p, group, project };
+    index.set(key, src);
+    sources.push(src);
   };
   let projects = [];
   try {
