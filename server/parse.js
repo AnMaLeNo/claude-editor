@@ -159,7 +159,7 @@ export function normalize(raw) {
         e.title = 'Contexte injecté · ' + (a.type ?? '?');
         const rendered = Array.isArray(o.rendered) ? o.rendered.map((r) => r.content ?? '').join('\n') : '';
         const full = rendered || (typeof a.text === 'string' ? a.text : compactJson(a, 1e9));
-        if (HEAVY_ATTACHMENTS.has(a.type) || full.length > 20000) {
+        if ((HEAVY_ATTACHMENTS.has(a.type) || full.length > 20000) && full.length > PREVIEW_CHARS) {
           e.heavy = true;
           e.text = full.slice(0, PREVIEW_CHARS);
           e.fullChars = full.length;
@@ -185,7 +185,7 @@ export function normalize(raw) {
         if (o.type === 'last-prompt') e.title = 'Technique · dernier prompt';
         if (o.type === 'cost-state') e.title = 'Technique · coût de la session';
         const s = compactJson(stripCommon(o), 1e9);
-        if (HEAVY_TYPES.has(o.type) || s.length > 20000) {
+        if ((HEAVY_TYPES.has(o.type) || s.length > 20000) && s.length > PREVIEW_CHARS) {
           e.heavy = true;
           e.text = s.slice(0, PREVIEW_CHARS);
           e.fullChars = s.length;

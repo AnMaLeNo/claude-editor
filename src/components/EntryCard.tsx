@@ -43,29 +43,47 @@ export function EntryCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const info = KIND_INFO[e.kind];
-  const long = e.text.length > COLLAPSE;
   const open = expanded || forceOpen;
-  const shown = open || !long ? e.text : e.text.slice(0, COLLAPSE);
 
-  const body = useMemo(() => {
-    if (e.kind !== 'prompt') return <pre className="text">{highlight(shown, re)}</pre>;
-    const parts = shown.split(TAG_RE);
-    const nodes: ReactNode[] = [];
+  // Pour les prompts : les balises de contexte (<ide_selection>, <system-reminder>…) sont repliées,
+  // et la troncature ne s'applique qu'au texte « humain » restant.
+  const { body, long, plainLen } = useMemo(() => {
+    const parts = e.kind === 'prompt' ? e.text.split(TAG_RE) : [e.text];
+    const plain: string[] = [];
+    const segs: { tag?: string; text: string }[] = [];
     for (let k = 0; k < parts.length; k++) {
       const p = parts[k];
-      if (p == null || p === '') continue;
       if (k % 3 === 1) {
-        const tag = parts[k + 1];
+        segs.push({ tag: parts[k + 1], text: p });
+        k++;
+      } else if (p) {
+        segs.push({ text: p });
+        plain.push(p);
+      }
+    }
+    const plainLen = plain.reduce((a, s) => a + s.length, 0);
+    const long = plainLen > COLLAPSE;
+    let budget = open || !long ? Infinity : COLLAPSE;
+    const nodes: ReactNode[] = [];
+    segs.forEach((sg, k) => {
+      if (sg.tag) {
         nodes.push(
-          <Collapsible key={k} label={`contexte <${tag}> (${p.length} car.)`}>
-            {highlight(p, re)}
+          <Collapsible key={k} label={`contexte <${sg.tag}> (${sg.text.length.toLocaleString('fr-FR')} car.)`}>
+            {highlight(sg.text, re)}
           </Collapsible>,
         );
-        k++;
-      } else if (k % 3 === 0) nodes.push(<pre key={k} className="text">{highlight(p, re)}</pre>);
-    }
-    return <>{nodes}</>;
-  }, [shown, re, e.kind]);
+      } else if (budget > 0) {
+        const t = sg.text.length > budget ? sg.text.slice(0, budget) : sg.text;
+        budget -= t.length;
+        nodes.push(
+          <pre key={k} className="text">
+            {highlight(t, re)}
+          </pre>,
+        );
+      }
+    });
+    return { body: <>{nodes}</>, long, plainLen };
+  }, [e.text, e.kind, re, open]);
 
   return (
     <article id={`e-${e.i}`} className={`card kind-${e.kind} ${e.isError ? 'error' : ''} ${isCurrent ? 'current' : ''} ${e.sidechain ? 'sidechain' : ''}`} style={{ ['--c' as string]: info.color }}>
@@ -101,7 +119,7 @@ export function EntryCard({
       )}
       {long && !forceOpen && (
         <button className="link more" onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Réduire' : `Afficher tout (${e.text.length.toLocaleString('fr-FR')} car.)`}
+          {expanded ? 'Réduire' : `Afficher tout (${plainLen.toLocaleString('fr-FR')} car.)`}
         </button>
       )}
       <footer>
