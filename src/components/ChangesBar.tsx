@@ -6,12 +6,14 @@ export function ChangesBar({
   source,
   onSave,
   onCancel,
+  onHarmonize,
   busy,
 }: {
   ops: EditOp[];
   source: Source;
   onSave: (dest: 'inplace' | 'clone', title?: string) => void;
   onCancel: () => void;
+  onHarmonize: () => void;
   busy: boolean;
 }) {
   const [title, setTitle] = useState('');
@@ -27,6 +29,9 @@ export function ChangesBar({
       <b>Modifications en attente :</b> <span>{parts.join(' · ')}</span>
       <span className="hint">(rien n'est écrit tant que tu n'enregistres pas ; la numérotation des lignes est celle du fichier d'origine)</span>
       <span className="spacer" />
+      <button onClick={onHarmonize} disabled={busy} title="Réécrire les réponses de Claude qui suivent tes modifications pour qu'elles restent cohérentes">
+        ≈ Harmoniser les réponses
+      </button>
       <input placeholder="Titre du clone (optionnel)" value={title} onChange={(e) => setTitle(e.target.value)} />
       {source.writable && (
         <button className="primary" disabled={busy} onClick={() => onSave('inplace')} title="Réécrit ce fichier (déposé ou clone)">

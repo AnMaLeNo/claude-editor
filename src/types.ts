@@ -193,6 +193,18 @@ export interface AiEditItem {
   model?: string;
 }
 
+export type HarmonizeRole = 'user' | 'assistant' | 'tool_call' | 'tool_result';
+
+export interface HarmonizeItem {
+  ref: string;
+  ok: boolean;
+  text?: string;
+  changed?: boolean;
+  error?: string;
+  costUSD?: number;
+  contextMessages?: number;
+}
+
 export interface Job<T> {
   id: string;
   status: 'running' | 'done' | 'error';

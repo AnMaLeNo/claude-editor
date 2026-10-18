@@ -1,4 +1,4 @@
-import type { AiSettings, CloneResult, EditOp, EditResult, Job, SessionData, Source, AiRoute, AiRoutes } from './types';
+import type { AiSettings, CloneResult, EditOp, EditResult, Job, SessionData, Source, AiRoute, AiRoutes, HarmonizeRole } from './types';
 
 async function j<T>(r: Response): Promise<T> {
   const data = await r.json().catch(() => ({}));
@@ -22,6 +22,8 @@ export const api = {
     fetch(`/api/sessions/${key}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<EditResult>(r)),
   settings: () => fetch('/api/settings').then((r) => j<AiSettings>(r)),
   saveSettings: (s: Partial<AiSettings>) => fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) }).then((r) => j<AiSettings>(r)),
+  aiHarmonize: (body: { transcript: { ref: string; role: HarmonizeRole; text: string }[]; targets: string[]; direction: string; contextChars: number; toolChars: number }) =>
+    fetch('/api/ai-harmonize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<{ jobId: string }>(r)),
   aiRoutes: () => fetch('/api/ai-routes').then((r) => j<AiRoutes>(r)),
   aiRoute: (query: string) => fetch('/api/ai-route', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) }).then((r) => j<AiRoute>(r)),
   aiSearch: (key: string, query: string, includeMeta: boolean, scope: string, type: string) =>
