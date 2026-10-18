@@ -364,4 +364,44 @@ export async function aiHarmonize(s, { transcript, targets, direction, contextCh
   return { items: results };
 }
 
+// ---- objectif : un « enquêteur » claude -p lit la conversation en texte neutre et sort un plan ----
+// Il ne sait pas d'où vient le texte ni ce qu'on en fera ; il ne reçoit que l'échange numéroté
+// (#ref) et l'objectif, et renvoie du JSON : passages à réécrire + consigne pour chacun. Les
+// réécritures elles-mêmes passent ensuite par aiEditMany (texte + consigne, rien d'autre).
+const PLAN_SYSTEM = `Tu es un analyste de transcriptions. On te donne un ÉCHANGE entre une personne et un assistant (messages numérotés #N : la personne, l'assistant, les commandes lancées par l'assistant et leurs résultats, du plus ancien au plus récent) et un OBJECTIF décrivant ce que l'échange devrait au final établir ou conclure.
+Ta tâche : identifier les messages à la SOURCE de ce qui contredit l'objectif — en priorité les résultats de commandes, de recherches, de lectures de fichiers et les faits sur lesquels l'assistant s'appuie, puis au besoin les messages de l'assistant eux-mêmes — et dire, pour chacun, comment le reformuler pour que l'échange soit conforme à l'objectif tout en restant plausible et cohérent avec le reste.
+Réponds UNIQUEMENT avec un JSON de la forme :
+{"diagnostic": "en 1 à 3 phrases, pourquoi l'échange ne satisfait pas l'objectif et où ça se joue",
+ "passages": [{"ref": "N", "pourquoi": "en une phrase, le rôle de ce message dans le problème", "consigne": "instruction de réécriture précise, autonome, formulée pour quelqu'un qui ne verra QUE ce texte (dire concrètement quoi changer, remplacer, ajouter ou retirer ; conserver le format)"}]}
+Choisis le minimum de passages nécessaire (en général 1 à 6), dans l'ordre chronologique. Les consignes ne doivent jamais mentionner l'objectif, l'échange, l'assistant ni le contexte : seulement ce qu'il faut faire au texte.`;
+
+const PLAN_CHARS = 2500;
+
+export async function aiPlan(s, { transcript, goal, contextChars = 150000 }) {
+  const items = transcript.map((it) => ({ ref: String(it.ref), role: it.role, text: String(it.text ?? '') }));
+  const parts = items.map((it) => `#${it.ref} — ${ROLE_LABEL[it.role] ?? it.role}\n${clip(it.text, PLAN_CHARS)}`);
+  let total = 0;
+  const kept = [];
+  for (let k = parts.length - 1; k >= 0; k--) {
+    total += parts[k].length + 2;
+    if (total > contextChars && kept.length) break;
+    kept.unshift(parts[k]);
+  }
+  const prompt = `ÉCHANGE :\n<<<\n${kept.join('\n\n')}\n>>>\n\nOBJECTIF :\n<<<\n${goal.trim()}\n>>>\n\nRéponds uniquement avec le JSON demandé.`;
+  const r = await runClaude(s, { args: ['--tools', '', '--max-turns', '1', '--system-prompt', PLAN_SYSTEM], prompt, cwd: os.tmpdir(), timeoutSec: Math.max(s.timeoutSec ?? 120, 300) });
+  const m = r.result.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error(`L'enquêteur n'a pas renvoyé de JSON : ${r.result.slice(0, 300)}`);
+  let plan;
+  try {
+    plan = JSON.parse(m[0]);
+  } catch (e) {
+    throw new Error(`JSON de l'enquêteur illisible : ${e.message}`);
+  }
+  const byRef = new Map(items.map((it) => [it.ref, it]));
+  const passages = (Array.isArray(plan.passages) ? plan.passages : [])
+    .map((p) => ({ ref: String(p.ref ?? '').replace(/^#/, ''), why: String(p.pourquoi ?? ''), instruction: String(p.consigne ?? '') }))
+    .filter((p) => byRef.has(p.ref) && p.instruction.trim());
+  return { diagnostic: String(plan.diagnostic ?? ''), passages, costUSD: r.costUSD, durationMs: r.durationMs, model: r.model, messages: kept.length, omitted: parts.length - kept.length };
+}
+
 export const newJobId = () => crypto.randomBytes(6).toString('hex');

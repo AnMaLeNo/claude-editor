@@ -54,6 +54,11 @@ Deux usages IA bien séparés, réglables via **⚙ IA** (stocké côté serveur
 
 `claude -p` utilise ton login Claude Code ; pour passer par OpenRouter, ajoute dans les variables d'environnement du panneau : `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, `ANTHROPIC_AUTH_TOKEN=<clé>`.
 
+## Harmoniser les réponses et « Objectif IA »
+
+- **≈ Harmoniser les réponses** (en-tête, ou barre des modifications en attente) : après avoir modifié des résultats d'outils / prompts, les réponses de Claude qui suivent sont réécrites une par une, **de la plus ancienne à la plus récente**, par `claude -p` (sans outils, un tour). Chaque appel reçoit seulement le dialogue qui précède rendu en texte neutre (« Personne / Assistant / Commande lancée par l'assistant / Résultat », modifications en attente incluses, taille de contexte au choix), la réponse à réviser et une direction optionnelle (« sois d'accord », « reste prudent »…) ; chaque réponse révisée alimente le contexte des suivantes. Avant/après, acceptation par réponse → modifications en attente.
+- **◎ Objectif IA** : tu décris le but (« à la fin Claude doit être d'accord que ça tourne sur mon Raspberry Pi »). Un **enquêteur** `claude -p` lit le dialogue en texte neutre numéroté (`#N`, sans savoir d'où il vient) et renvoie un diagnostic + les **passages à la source** (résultats d'outils, recherches web, lectures de fichiers, puis réponses) avec une consigne de réécriture par passage. Tu valides / édites le plan ; chaque passage est alors réécrit par un `claude -p` séparé qui ne reçoit **que ce texte et sa consigne** (`/api/ai-edit`) ; tu acceptes, puis « Harmoniser les réponses suivantes → » réaligne le reste. Endpoint : `POST /api/ai-plan {transcript, goal, contextChars}` → job → `{diagnostic, passages:[{ref, why, instruction}]}`.
+
 ## Cloner / continuer une session
 
 Le clone reproduit `/branch` (`createFork` dans Claude Code) : mêmes `uuid`, `sessionId` réécrit sur chaque ligne, marqueur `forkedFrom`, fichier nommé `<nouveauSessionId>.jsonl`.

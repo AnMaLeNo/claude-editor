@@ -188,3 +188,9 @@ mark { background: #ffd43b; color: #000; border-radius: 2px; padding: 0 1px; }
 .proposal.unchanged { opacity: 0.75; }
 .proposal.running { border-color: #4f8cff; }
 .row.wrap { flex-wrap: wrap; }
+
+.steps { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; font-size: 13px; color: var(--dim); }
+.steps .on { color: var(--fg); font-weight: 600; }
+.steps .done { color: #3ecf8e; }
+.plan-box { border: 1px solid var(--line); border-left: 3px solid #4f8cff; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.plan-box p { margin: 4px 0 0; }

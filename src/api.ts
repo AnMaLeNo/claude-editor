@@ -22,6 +22,8 @@ export const api = {
     fetch(`/api/sessions/${key}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<EditResult>(r)),
   settings: () => fetch('/api/settings').then((r) => j<AiSettings>(r)),
   saveSettings: (s: Partial<AiSettings>) => fetch('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(s) }).then((r) => j<AiSettings>(r)),
+  aiPlan: (body: { transcript: { ref: string; role: HarmonizeRole; text: string }[]; goal: string; contextChars: number }) =>
+    fetch('/api/ai-plan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<{ jobId: string }>(r)),
   aiHarmonize: (body: { transcript: { ref: string; role: HarmonizeRole; text: string }[]; targets: string[]; direction: string; contextChars: number; toolChars: number }) =>
     fetch('/api/ai-harmonize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<{ jobId: string }>(r)),
   aiRoutes: () => fetch('/api/ai-routes').then((r) => j<AiRoutes>(r)),
