@@ -1,6 +1,6 @@
 // Intégration de `claude -p` : paramètres, recherche IA sur un rendu texte de la conversation,
 // réécriture IA d'un texte brut (sans aucun contexte sur sa nature).
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -41,12 +41,56 @@ function commonArgs(s) {
   return a;
 }
 
+
+// ---- localisation du binaire claude ------------------------------------------
+// Windows : `claude` installé par npm est un `claude.cmd`, que Node refuse de lancer sans shell
+// (et le shell casse les arguments multi-lignes) → on lance directement node + cli.js.
+// L'installeur natif donne un claude.exe (~/.local/bin), lançable tel quel.
+function cmdShimTarget(cmdPath) {
+  const cli = path.join(path.dirname(cmdPath), 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+  return fs.existsSync(cli) ? cli : null;
+}
+
+export function resolveClaude(claudePath) {
+  const want = (claudePath || 'claude').trim();
+  const win = process.platform === 'win32';
+  const asCommand = (p) => {
+    if (win && /\.cmd$/i.test(p)) {
+      const cli = cmdShimTarget(p);
+      return cli ? { cmd: process.execPath, pre: [cli], shown: p } : null;
+    }
+    return { cmd: p, pre: [], shown: p };
+  };
+  if (/[\\/]/.test(want)) return asCommand(want) ?? { cmd: want, pre: [], shown: want };
+  const home = os.homedir();
+  const candidates = [];
+  const r = spawnSync(win ? 'where' : 'which', [want], { encoding: 'utf8', shell: false });
+  if (r.status === 0) candidates.push(...r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
+  if (win) {
+    candidates.push(
+      path.join(home, '.local', 'bin', `${want}.exe`),
+      path.join(process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'npm', `${want}.cmd`),
+      path.join(process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'), 'Programs', 'claude', `${want}.exe`),
+    );
+  } else {
+    candidates.push(path.join(home, '.local', 'bin', want), path.join(home, '.claude', 'local', want), `/usr/local/bin/${want}`, `/opt/homebrew/bin/${want}`);
+  }
+  const existing = candidates.filter((c) => fs.existsSync(c));
+  existing.sort((a, b) => Number(/\.cmd$/i.test(a)) - Number(/\.cmd$/i.test(b)));
+  for (const c of existing) {
+    const cmd = asCommand(c);
+    if (cmd) return cmd;
+  }
+  return { cmd: want, pre: [], shown: want };
+}
+
 export function runClaude(s, { args, prompt, cwd, timeoutSec }) {
+  const bin = resolveClaude(s.claudePath);
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...(s.extraEnv ?? {}), CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
     let child;
     try {
-      child = spawn(s.claudePath || 'claude', [...commonArgs(s), ...args], { cwd: cwd ?? os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(bin.cmd, [...bin.pre, ...commonArgs(s), ...args], { cwd: cwd ?? os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (e) {
       return reject(e);
     }
@@ -60,7 +104,7 @@ export function runClaude(s, { args, prompt, cwd, timeoutSec }) {
     child.stderr.on('data', (d) => (err += d));
     child.on('error', (e) => {
       clearTimeout(to);
-      reject(new Error(`Impossible de lancer « ${s.claudePath} » : ${e.message}`));
+      reject(new Error(`Impossible de lancer « ${bin.shown} » : ${e.message}. Indique le chemin complet du binaire claude (claude.exe / claude.cmd sous Windows) dans ⚙ IA.`));
     });
     child.on('close', (code) => {
       clearTimeout(to);
