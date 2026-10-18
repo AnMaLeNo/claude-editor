@@ -54,8 +54,9 @@ mark { background: #ffd43b; color: #000; border-radius: 2px; padding: 0 1px; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .welcome { padding: 40px; max-width: 760px; color: var(--dim); line-height: 1.6; }
 .welcome h2 { color: var(--fg); }
-.session-head { padding: 12px 20px 0; display: flex; gap: 12px; align-items: baseline; }
-.session-head h2 { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-head { padding: 12px 20px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.session-head h2 { margin: 0; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 200px; min-width: 0; }
+.session-head .mono { font-size: 11px; }
 .toolbar { padding: 10px 20px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; background: var(--bg); position: sticky; top: 0; z-index: 2; }
 .search { flex: 1; min-width: 200px; font-size: 15px; padding: 8px 10px !important; }
 .opt { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--dim); white-space: nowrap; }
