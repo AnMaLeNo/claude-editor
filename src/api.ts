@@ -1,4 +1,4 @@
-import type { CloneResult, SessionData, Source } from './types';
+import type { CloneResult, EditOp, EditResult, SessionData, Source } from './types';
 
 async function j<T>(r: Response): Promise<T> {
   const data = await r.json().catch(() => ({}));
@@ -18,6 +18,8 @@ export const api = {
   },
   clone: (key: string, body: { dest: 'same' | 'workspace'; title?: string }) =>
     fetch(`/api/sessions/${key}/clone`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<CloneResult>(r)),
+  edit: (key: string, body: { ops: EditOp[]; dest: 'inplace' | 'clone'; title?: string; cloneDest?: 'same' | 'workspace' }) =>
+    fetch(`/api/sessions/${key}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => j<EditResult>(r)),
   remove: (key: string) => fetch(`/api/sessions/${key}`, { method: 'DELETE' }).then((r) => j<{ ok: true }>(r)),
   downloadUrl: (key: string) => `/api/sessions/${key}/download`,
 };

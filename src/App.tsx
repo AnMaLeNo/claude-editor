@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CloneResult, Entry, SessionData, Source } from './types';
+import type { CloneResult, EditOp, Entry, SessionData, Source } from './types';
 import { api } from './api';
 import { Sidebar } from './components/Sidebar';
 import { Toolbar, DEFAULT_KINDS, type Filters } from './components/Toolbar';
 import { EntryCard } from './components/EntryCard';
 import { RightPanel } from './components/RightPanel';
 import { Modal } from './components/Modal';
+import { ChangesBar } from './components/ChangesBar';
 import { buildRegex } from './highlight';
 
 const initialFilters: Filters = {
@@ -41,6 +42,9 @@ export default function App() {
   const [raw, setRaw] = useState<{ i: number; json: unknown } | null>(null);
   const [current, setCurrent] = useState(0);
   const [config, setConfig] = useState<{ projectsDir: string; dataDir: string } | null>(null);
+  const [ops, setOps] = useState<EditOp[]>([]);
+  const [reloadTick, setReloadTick] = useState(0);
+  const [saving, setSaving] = useState(false);
   const set = useCallback((p: Partial<Filters>) => setF((old) => ({ ...old, ...p })), []);
   const dq = useDebounced(f.q, 150);
 
@@ -71,11 +75,12 @@ export default function App() {
       .session(selected)
       .then((d) => {
         setData(d);
+        setOps([]);
         setF((old) => ({ ...initialFilters, q: old.q, regex: old.regex, caseSensitive: old.caseSensitive, word: old.word, kinds: old.kinds }));
       })
       .catch((e) => notify(`Erreur : ${e.message}`))
       .finally(() => setLoading(false));
-  }, [selected]);
+  }, [selected, reloadTick]);
 
   const onUpload = async (file: File) => {
     setLoading(true);
@@ -91,6 +96,99 @@ export default function App() {
     }
   };
 
+  // Entrées affichées = fichier d'origine + modifications en attente (aperçu local, rien n'est écrit).
+  const entries = useMemo(() => {
+    if (!data) return [] as Entry[];
+    if (!ops.length) return data.entries;
+    const edits = new Map<number, string>();
+    const deleted = new Set<number>();
+    const inserts = new Map<number, Extract<EditOp, { op: 'insert_after' }>[]>();
+    for (const o of ops) {
+      if (o.op === 'set_text') edits.set(o.i, o.text);
+      else if (o.op === 'delete') deleted.add(o.i);
+      else {
+        if (!inserts.has(o.i)) inserts.set(o.i, []);
+        inserts.get(o.i)!.push(o);
+      }
+    }
+    // cascade appel <-> résultat (comme le serveur)
+    for (const e of data.entries) {
+      if (e.kind === 'tool_result' && e.tools?.some((t) => t.useIndex != null && deleted.has(t.useIndex))) deleted.add(e.i);
+    }
+    for (const e of data.entries) {
+      if (e.kind === 'tool_result' && deleted.has(e.i)) for (const t of e.tools ?? []) if (t.useIndex != null) deleted.add(t.useIndex);
+    }
+    const out: Entry[] = [];
+    for (const e of data.entries) {
+      let x = e;
+      if (edits.has(e.i)) x = { ...x, text: edits.get(e.i)!, edited: true };
+      if (deleted.has(e.i)) x = { ...x, deleted: true };
+      out.push(x);
+      for (const ins of inserts.get(e.i) ?? []) {
+        out.push({
+          i: -1,
+          bytes: 0,
+          type: ins.role,
+          kind: ins.role === 'user' ? 'prompt' : 'assistant',
+          parentUuid: null,
+          ts: e.ts,
+          sidechain: false,
+          turn: e.turn,
+          title: ins.role === 'user' ? 'Nouveau prompt (inséré)' : 'Nouvelle réponse (insérée)',
+          text: ins.text,
+          heavy: false,
+          inserted: true,
+          insertId: ins.id,
+        });
+      }
+    }
+    return out;
+  }, [data, ops]);
+
+  const onEdit = (e: Entry, text: string) => {
+    if (e.inserted) setOps((o) => o.map((x) => (x.op === 'insert_after' && x.id === e.insertId ? { ...x, text } : x)));
+    else setOps((o) => [...o.filter((x) => !(x.op === 'set_text' && x.i === e.i)), { op: 'set_text', i: e.i, text }]);
+  };
+  const onDelete = (e: Entry) => {
+    if (e.inserted) setOps((o) => o.filter((x) => !(x.op === 'insert_after' && x.id === e.insertId)));
+    else setOps((o) => [...o.filter((x) => !(x.op === 'delete' && x.i === e.i)), { op: 'delete', i: e.i }]);
+  };
+  const onRestore = (e: Entry) => {
+    if (!data) return;
+    // rétablir aussi la paire appel/résultat
+    const pair = new Set<number>([e.i]);
+    if (e.kind === 'tool_result') for (const t of e.tools ?? []) if (t.useIndex != null) pair.add(t.useIndex);
+    if (e.kind === 'tool_use') for (const r of data.entries) if (r.kind === 'tool_result' && r.tools?.some((t) => t.useIndex === e.i)) pair.add(r.i);
+    setOps((o) => o.filter((x) => !(x.op === 'delete' && pair.has(x.i))));
+  };
+  const onInsert = (e: Entry, role: 'user' | 'assistant') => {
+    const text = role === 'user' ? 'Nouveau message utilisateur…' : 'Nouvelle réponse de Claude…';
+    setOps((o) => [...o, { op: 'insert_after', i: e.i, role, text, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }]);
+  };
+  const deleteTurn = (turn: number) => {
+    if (!data) return;
+    const targets = data.entries.filter((x) => x.turn === turn && ['prompt', 'assistant', 'thinking', 'tool_use', 'tool_result'].includes(x.kind));
+    if (!targets.length) return;
+    if (!confirm(`Supprimer les ${targets.length} entrées conversationnelles du tour ${turn} ?`)) return;
+    setOps((o) => [...o.filter((x) => !(x.op === 'delete' && targets.some((t) => t.i === x.i))), ...targets.map((t) => ({ op: 'delete', i: t.i }) as EditOp)]);
+  };
+  const saveEdits = async (dest: 'inplace' | 'clone', title?: string) => {
+    if (!data || !selected) return;
+    setSaving(true);
+    try {
+      const r = await api.edit(selected, { ops, dest, title, cloneDest: 'same' });
+      await refresh();
+      setOps([]);
+      if (r.source.key !== selected) setSelected(r.source.key);
+      else setReloadTick((t) => t + 1);
+      notify(dest === 'clone' ? `Modifications enregistrées dans un nouveau clone : ${r.resumeById ?? r.resumeByPath}` : `Fichier enregistré (${r.deleted} suppression(s), ${r.inserted} insertion(s)).`);
+    } catch (e) {
+      notify(`Enregistrement impossible : ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const re = useMemo(() => buildRegex(dq, { regex: f.regex, caseSensitive: f.caseSensitive, word: f.word }), [dq, f.regex, f.caseSensitive, f.word]);
   const reTest = useMemo(() => (re ? new RegExp(re.source, re.flags.replace('g', '')) : null), [re]);
 
@@ -98,7 +196,7 @@ export default function App() {
     if (!data) return [] as Entry[];
     const from = f.from ? new Date(f.from).getTime() : null;
     const to = f.to ? new Date(f.to).getTime() : null;
-    return data.entries.filter((e) => {
+    return entries.filter((e) => {
       if (!f.kinds.has(e.kind)) return false;
       if (!f.includeSidechain && e.sidechain) return false;
       if (f.errorsOnly && !e.isError && !(e.kind === 'system' && (e.level === 'error' || /error/i.test(e.subtype ?? '')))) return false;
@@ -111,7 +209,7 @@ export default function App() {
       }
       return true;
     });
-  }, [data, f]);
+  }, [data, entries, f]);
 
   const matched = useMemo(() => {
     if (!reTest) return visible;
@@ -173,6 +271,7 @@ export default function App() {
 
   const showRaw = async (i: number) => {
     if (!selected) return;
+    if (i < 0) return notify("Entrée insérée : elle n'existe pas encore dans le fichier.");
     try {
       setRaw({ i, json: await api.line(selected, i) });
     } catch (e) {
@@ -243,13 +342,19 @@ export default function App() {
                     {g.prompt && <span className="turn-prompt">{g.prompt.text.replace(/<(ide_selection|system-reminder|ide_opened_file)>[\s\S]*?<\/\1>/g, '').trim().slice(0, 140)}</span>}
                     {g.prompt?.ts && <span className="dim">{new Date(g.prompt.ts).toLocaleString('fr-FR')}</span>}
                     <span className="dim">{g.items.length} entrée{g.items.length > 1 ? 's' : ''}</span>
+                    {g.turn > 0 && (
+                      <button className="link danger-link" onClick={() => deleteTurn(g.turn)} title="Marquer tout le tour à supprimer (prompt, réponses, outils)">
+                        ✕ tour
+                      </button>
+                    )}
                   </div>
                   {g.items.map((e) => (
-                    <EntryCard key={e.i} e={e} re={re} isCurrent={e.i === currentI} onShowRaw={showRaw} onGoto={onGoto} onFocusTurn={(t) => set({ turn: t })} forceOpen={!!re && matched.includes(e)} />
+                    <EntryCard key={e.inserted ? `ins-${e.insertId}` : e.i} e={e} re={re} isCurrent={e.i === currentI} onShowRaw={showRaw} onGoto={onGoto} onFocusTurn={(t) => set({ turn: t })} forceOpen={!!re && matched.includes(e)} onEdit={onEdit} onDelete={onDelete} onRestore={onRestore} onInsert={onInsert} />
                   ))}
                 </section>
               ))}
             </div>
+            {ops.length > 0 && <ChangesBar ops={ops} source={data.source} onSave={saveEdits} onCancel={() => setOps([])} busy={saving} />}
           </>
         )}
       </main>

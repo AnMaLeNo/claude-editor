@@ -39,6 +39,25 @@ export interface Entry {
   thinking?: string;
   level?: string;
   leafUuid?: string;
+  // état d'édition (côté client uniquement)
+  edited?: boolean;
+  deleted?: boolean;
+  inserted?: boolean;
+  insertId?: string;
+}
+
+export type EditOp =
+  | { op: 'set_text'; i: number; text: string }
+  | { op: 'delete'; i: number }
+  | { op: 'insert_after'; i: number; role: 'user' | 'assistant'; text: string; id: string };
+
+export interface EditResult {
+  source: Source;
+  newSessionId?: string;
+  deleted: number;
+  inserted: number;
+  resumeByPath: string;
+  resumeById?: string;
 }
 
 export interface Stats {
