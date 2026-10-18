@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parseLines, normalize, computeStats, quickSummary, cloneTranscript } from './parse.js';
 import { applyEdits } from './edit.js';
-import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES } from './ai.js';
+import { loadSettings, saveSettings, aiSearch, aiEditMany, newJobId, aiRoute, ROUTE_SCOPES, ROUTE_TYPES, aiHarmonize } from './ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -305,6 +305,24 @@ app.post('/api/ai-edit', async (req, res) => {
     );
     return { items: items.map((it, k) => ({ ref: it.ref, ...results[k] })) };
   });
+  res.json({ jobId: job.id });
+});
+
+app.post('/api/ai-harmonize', async (req, res) => {
+  const { transcript, targets, direction = '', contextChars, toolChars } = req.body ?? {};
+  if (!Array.isArray(transcript) || !transcript.length) return res.status(400).json({ error: 'Transcription vide' });
+  if (!Array.isArray(targets) || !targets.length) return res.status(400).json({ error: 'Aucune réponse à harmoniser' });
+  const st = loadSettings(SETTINGS_FILE);
+  const job = startJob((job) =>
+    aiHarmonize(st, {
+      transcript,
+      targets,
+      direction: String(direction),
+      contextChars: Number(contextChars) || undefined,
+      toolChars: Number(toolChars) || undefined,
+      onResult: (r) => job.progress.push(r),
+    }),
+  );
   res.json({ jobId: job.id });
 });
 

@@ -303,4 +303,65 @@ export async function aiEditMany(s, items, onProgress) {
   return results;
 }
 
+// ---- harmonisation : réécrire les réponses pour qu'elles collent à ce qui précède ----
+// Claude ne reçoit qu'un « échange » en texte neutre (personne / assistant / commande / résultat),
+// tronqué à contextChars, puis le message à réviser. Rien sur l'origine du texte ni sur le fait
+// qu'il a été modifié. Les cibles sont traitées dans l'ordre : chaque réponse révisée alimente le
+// contexte des suivantes.
+const HARMONIZE_SYSTEM = `Tu es un outil de révision de transcription. On te donne un ÉCHANGE (suite de messages entre une personne et un assistant, avec les commandes lancées et leurs résultats, du plus ancien au plus récent) puis le MESSAGE À RÉVISER, qui est le message suivant de l'assistant dans cet échange.
+Réécris ce message pour qu'il soit parfaitement cohérent avec l'échange qui précède : faits, résultats de commandes, contenus de fichiers, chiffres, noms, décisions. Tout ce que le message affirme doit être exact au regard de l'échange ; ce qui est contredit par l'échange doit être corrigé, ce qui est confirmé doit être gardé.
+Conserve la langue, le ton, la personne grammaticale, la structure et la longueur approximative du message. Si le message est déjà cohérent, renvoie-le strictement inchangé.
+Renvoie UNIQUEMENT le message révisé, sans commentaire, sans explication, sans marqueurs.`;
+
+const ROLE_LABEL = { user: 'Personne', assistant: 'Assistant', tool_call: "Commande lancée par l'assistant", tool_result: 'Résultat' };
+
+function clip(t, max) {
+  if (t.length <= max) return t;
+  const half = Math.floor(max / 2);
+  return `${t.slice(0, half)}\n[… ${t.length - max} caractères omis …]\n${t.slice(-half)}`;
+}
+
+function renderExchange(items, { contextChars, toolChars }) {
+  const parts = items.map((it) => `### ${ROLE_LABEL[it.role] ?? it.role}\n${it.role === 'tool_result' || it.role === 'tool_call' ? clip(it.text, toolChars) : it.text}`);
+  let total = 0;
+  const kept = [];
+  for (let k = parts.length - 1; k >= 0; k--) {
+    total += parts[k].length + 2;
+    if (total > contextChars && kept.length) break;
+    kept.unshift(parts[k]);
+  }
+  const omitted = parts.length - kept.length;
+  return (omitted ? `[${omitted} message${omitted > 1 ? 's' : ''} plus ancien${omitted > 1 ? 's' : ''} omis]\n\n` : '') + kept.join('\n\n');
+}
+
+export async function aiHarmonizeOne(s, { before, text, direction, contextChars, toolChars }) {
+  const exchange = renderExchange(before, { contextChars, toolChars });
+  const prompt = `ÉCHANGE :\n<<<\n${exchange}\n>>>\n\nMESSAGE À RÉVISER :\n<<<\n${text}\n>>>\n${direction?.trim() ? `\nCONSIGNE SUPPLÉMENTAIRE pour la révision : ${direction.trim()}\n` : ''}\nRenvoie uniquement le message révisé, sans les marqueurs <<< >>>.`;
+  const r = await runClaude(s, { args: ['--tools', '', '--max-turns', '1', '--system-prompt', HARMONIZE_SYSTEM], prompt, cwd: os.tmpdir() });
+  let out = r.result.replace(/^\s*<<<\s*\n?/, '').replace(/\n?\s*>>>\s*$/, '');
+  if (!text.endsWith('\n')) out = out.replace(/\n+$/, '');
+  return { text: out, changed: out.trim() !== text.trim(), costUSD: r.costUSD, durationMs: r.durationMs, model: r.model, contextMessages: before.length };
+}
+
+export async function aiHarmonize(s, { transcript, targets, direction, contextChars = 60000, toolChars = 4000, onResult }) {
+  const items = transcript.map((it) => ({ ref: String(it.ref), role: it.role, text: String(it.text ?? '') }));
+  const results = [];
+  for (const ref of targets.map(String)) {
+    const k = items.findIndex((it) => it.ref === ref);
+    if (k < 0) {
+      results.push({ ref, ok: false, error: 'Entrée absente de la transcription' });
+      continue;
+    }
+    try {
+      const r = await aiHarmonizeOne(s, { before: items.slice(0, k), text: items[k].text, direction, contextChars, toolChars });
+      items[k] = { ...items[k], text: r.text };
+      results.push({ ref, ok: true, ...r });
+    } catch (e) {
+      results.push({ ref, ok: false, error: e.message });
+    }
+    onResult?.(results[results.length - 1]);
+  }
+  return { items: results };
+}
+
 export const newJobId = () => crypto.randomBytes(6).toString('hex');

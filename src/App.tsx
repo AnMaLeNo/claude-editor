@@ -9,6 +9,7 @@ import { Modal } from './components/Modal';
 import { ChangesBar } from './components/ChangesBar';
 import { AiSearchPanel } from './components/AiSearchPanel';
 import { AiEditModal } from './components/AiEditModal';
+import { HarmonizeModal } from './components/HarmonizeModal';
 import { SettingsModal } from './components/SettingsModal';
 import { buildRegex } from './highlight';
 
@@ -53,6 +54,7 @@ export default function App() {
   const [aiProgress, setAiProgress] = useState('');
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [harmonizeOpen, setHarmonizeOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const set = useCallback((p: Partial<Filters>) => setF((old) => ({ ...old, ...p })), []);
@@ -384,6 +386,9 @@ export default function App() {
                   <button onClick={() => setSelection(new Set())}>✕</button>
                 </span>
               )}
+              <button onClick={() => setHarmonizeOpen(true)} title="Réécrire les réponses de Claude pour qu'elles restent cohérentes avec ce qui précède (après tes modifications)">
+                ≈ Harmoniser les réponses
+              </button>
               <button onClick={() => setSettingsOpen(true)} title="Paramètres IA (JEV, claude -p)">
                 ⚙ IA
               </button>
@@ -429,7 +434,7 @@ export default function App() {
                 </section>
               ))}
             </div>
-            {ops.length > 0 && <ChangesBar ops={ops} source={data.source} onSave={saveEdits} onCancel={() => setOps([])} busy={saving} />}
+            {ops.length > 0 && <ChangesBar ops={ops} source={data.source} onSave={saveEdits} onCancel={() => setOps([])} onHarmonize={() => setHarmonizeOpen(true)} busy={saving} />}
           </>
         )}
       </main>
@@ -445,6 +450,9 @@ export default function App() {
           onClose={() => setAiEditOpen(false)}
           onAccept={(e, text) => onEdit(e, text)}
         />
+      )}
+      {harmonizeOpen && data && (
+        <HarmonizeModal entries={entries} firstEditedI={ops.length ? Math.min(...ops.map((o) => o.i)) : null} selected={selection} onClose={() => setHarmonizeOpen(false)} onAccept={(e, text) => onEdit(e, text)} />
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
